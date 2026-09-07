@@ -19,7 +19,7 @@
 
 services:
   - type: web
-    name: hermes
+    name: selwa-law-hermes-v2
     runtime: docker
     region: virginia
     plan: standard
