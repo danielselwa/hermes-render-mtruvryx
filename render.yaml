@@ -21,7 +21,7 @@ services:
   - type: web
     name: hermes
     runtime: docker
-    region: oregon
+    region: virginia
     plan: standard
     # Render builds the image from this repo's Dockerfile on every deploy.
     # The Dockerfile FROMs the pinned upstream Hermes image, adds Render
