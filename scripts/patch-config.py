@@ -190,7 +190,29 @@ def ensure_external_skill_dirs(config: dict) -> list[str]:
 
     return added
 
+def ensure_main_model(config: dict) -> bool:
+    """Configure OpenAI GPT-5.4 as the Hermes main model."""
+    desired = {
+        "provider": "openai",
+        "default": "gpt-5.4",
+        "base_url": "",
+        "api_mode": "chat_completions",
+    }
 
+    current = config.get("model")
+
+    if not isinstance(current, dict):
+        config["model"] = desired
+        return True
+
+    changed = False
+
+    for key, value in desired.items():
+        if current.get(key) != value:
+            current[key] = value
+            changed = True
+
+    return changed
 def save_config(path: Path, config: dict) -> None:
     text = yaml.safe_dump(
         config,
@@ -220,8 +242,8 @@ def main() -> int:
     changed_render_mcp = ensure_render_mcp(config)
     changed_selwa_mcp = ensure_selwa_law_mcp(config)
     added_dirs = ensure_external_skill_dirs(config)
-
-    if changed_render_mcp or changed_selwa_mcp or added_dirs:
+    changed_model = ensure_main_model(config)
+    if changed_render_mcp or changed_selwa_mcp or added_dirs or changed_model:
         save_config(path, config)
 
         parts = []
@@ -231,7 +253,8 @@ def main() -> int:
 
         if changed_selwa_mcp:
             parts.append("mcp_servers.selwa_law")
-
+        if changed_model:
+    parts.append("model = openai/gpt-5.4")
         for dir_path in added_dirs:
             parts.append(f"skills.external_dirs += {dir_path}")
 
