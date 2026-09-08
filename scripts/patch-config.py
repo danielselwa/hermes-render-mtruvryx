@@ -193,11 +193,11 @@ def ensure_external_skill_dirs(config: dict) -> list[str]:
 def ensure_main_model(config: dict) -> bool:
     """Configure OpenAI GPT-5.4 as the Hermes main model."""
     desired = {
-        "provider": "custom",
-        "default": "gpt-5.4",
-        "base_url": "https://api.openai.com/v1",
-        "api_mode": "codex_responses",
-    }
+    "provider": "openai",
+    "default": "gpt-5.4",
+    "base_url": "https://api.openai.com/v1",
+    "api_mode": "codex_responses",
+}
 
     current = config.get("model")
 
@@ -254,7 +254,7 @@ def main() -> int:
         if changed_selwa_mcp:
             parts.append("mcp_servers.selwa_law")
         if changed_model:
-    parts.append("model = custom/gpt-5.4 via api.openai.com")
+    parts.append("model = openai/gpt-5.4")
             parts.append(f"skills.external_dirs += {dir_path}")
 
         print(
