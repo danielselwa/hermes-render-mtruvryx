@@ -1,14 +1,4 @@
 #!/opt/hermes/.venv/bin/python
-"""Idempotent patcher for Hermes' config.yaml on Render.
-
-Adds:
-  1. Render's MCP server.
-  2. Selwa Law's private MCP server.
-  3. Render's bundled external skill directories.
-
-The patcher is INSERT-only. Existing user configuration is preserved.
-"""
-
 from __future__ import annotations
 
 import sys
@@ -17,20 +7,17 @@ from pathlib import Path
 import yaml
 
 
-# Render skill directories, in precedence order.
 RENDER_SKILL_DIRS = (
     "/opt/render-tools/skills-local",
     "/opt/render-tools/skills-upstream",
 )
 
-# Render MCP.
 RENDER_MCP_URL = "https://mcp.render.com/mcp"
 RENDER_MCP_AUTH = "Bearer ${RENDER_MCP_API_KEY}"
 
-# Selwa Law MCP.
-# Both services are in Render's Virginia region, so this uses
-# Render's private network rather than the public internet.
 SELWA_LAW_MCP_URL = "http://selwa-law-mcp:8000/mcp"
+
+OPENAI_API_URL = "https://api.openai.com/v1"
 
 
 def load_config(path: Path) -> dict:
@@ -53,22 +40,39 @@ def load_config(path: Path) -> dict:
             f"[render-tools] {path} is not valid YAML ({exc}); refusing to patch",
             file=sys.stderr,
         )
-        sys.exit(0)
+        return {}
 
     return data if isinstance(data, dict) else {}
 
 
-def _render_entry() -> dict:
-    return {
+def ensure_render_mcp(config: dict) -> bool:
+    mcp_servers = config.setdefault("mcp_servers", {})
+
+    if not isinstance(mcp_servers, dict):
+        print("[render-tools] mcp_servers is not a mapping", file=sys.stderr)
+        return False
+
+    if "render" in mcp_servers:
+        return False
+
+    mcp_servers["render"] = {
         "url": RENDER_MCP_URL,
         "headers": {
             "Authorization": RENDER_MCP_AUTH,
         },
     }
 
+    return True
 
-def _selwa_law_entry() -> dict:
-    return {
+
+def ensure_selwa_law_mcp(config: dict) -> bool:
+    mcp_servers = config.setdefault("mcp_servers", {})
+
+    if not isinstance(mcp_servers, dict):
+        print("[render-tools] mcp_servers is not a mapping", file=sys.stderr)
+        return False
+
+    desired = {
         "url": SELWA_LAW_MCP_URL,
         "headers": {
             "mcp-protocol-version": "2025-06-18",
@@ -81,91 +85,69 @@ def _selwa_law_entry() -> dict:
         },
     }
 
-
-def ensure_render_mcp(config: dict) -> bool:
-    """Insert mcp_servers.render if missing."""
-    mcp_servers = config.get("mcp_servers")
-
-    if mcp_servers is None:
-        config["mcp_servers"] = {
-            "render": _render_entry(),
-        }
-        return True
-
-    if not isinstance(mcp_servers, dict):
-        print(
-            "[render-tools] mcp_servers is not a mapping; skipping Render MCP",
-            file=sys.stderr,
-        )
+    if mcp_servers.get("selwa_law") == desired:
         return False
 
-    if "render" in mcp_servers:
-        return False
-
-    mcp_servers["render"] = _render_entry()
+    mcp_servers["selwa_law"] = desired
     return True
 
 
-def ensure_selwa_law_mcp(config: dict) -> bool:
-    """Ensure Selwa Law MCP exists and uses the compatible protocol header."""
-    mcp_servers = config.get("mcp_servers")
+def ensure_openai_direct_provider(config: dict) -> bool:
+    providers = config.setdefault("providers", {})
 
-    if mcp_servers is None:
-        config["mcp_servers"] = {
-            "selwa_law": _selwa_law_entry(),
-        }
-        return True
-
-    if not isinstance(mcp_servers, dict):
-        print(
-            "[render-tools] mcp_servers is not a mapping; skipping Selwa Law MCP",
-            file=sys.stderr,
-        )
+    if not isinstance(providers, dict):
+        print("[render-tools] providers is not a mapping", file=sys.stderr)
         return False
 
-    entry = mcp_servers.get("selwa_law")
+    desired = {
+        "api": OPENAI_API_URL,
+        "key_env": "OPENAI_API_KEY",
+        "transport": "codex_responses",
+        "default_model": "gpt-5.4",
+        "models": [
+            "gpt-5.4",
+        ],
+    }
 
-    if entry is None:
-        mcp_servers["selwa_law"] = _selwa_law_entry()
-        return True
-
-    if not isinstance(entry, dict):
-        print(
-            "[render-tools] mcp_servers.selwa_law is not a mapping; skipping",
-            file=sys.stderr,
-        )
+    if providers.get("openai-direct") == desired:
         return False
 
-    headers = entry.get("headers")
+    providers["openai-direct"] = desired
+    return True
 
-    if headers is None:
-        entry["headers"] = {
-            "mcp-protocol-version": "2025-06-18",
-        }
-        return True
 
-    if not isinstance(headers, dict):
-        print(
-            "[render-tools] selwa_law headers is not a mapping; skipping",
-            file=sys.stderr,
-        )
-        return False
+def ensure_main_model(config: dict) -> bool:
+    model = config.get("model")
 
-    if headers.get("mcp-protocol-version") != "2025-06-18":
-        headers["mcp-protocol-version"] = "2025-06-18"
-        return True
+    if not isinstance(model, dict):
+        model = {}
+        config["model"] = model
 
-    return False
+    changed = False
+
+    if model.get("provider") != "custom:openai-direct":
+        model["provider"] = "custom:openai-direct"
+        changed = True
+
+    if model.get("default") != "gpt-5.4":
+        model["default"] = "gpt-5.4"
+        changed = True
+
+    # Remove stale settings from our earlier attempts.
+    # The named provider above now owns the endpoint and transport.
+    for stale_key in ("base_url", "api_mode"):
+        if stale_key in model:
+            model.pop(stale_key)
+            changed = True
+
+    return changed
+
 
 def ensure_external_skill_dirs(config: dict) -> list[str]:
-    """Append Render skill directories if missing."""
     skills = config.setdefault("skills", {})
 
     if not isinstance(skills, dict):
-        print(
-            "[render-tools] skills is not a mapping; skipping external_dirs",
-            file=sys.stderr,
-        )
+        print("[render-tools] skills is not a mapping", file=sys.stderr)
         return []
 
     existing = skills.get("external_dirs")
@@ -176,12 +158,12 @@ def ensure_external_skill_dirs(config: dict) -> list[str]:
 
     if not isinstance(existing, list):
         print(
-            "[render-tools] skills.external_dirs is not a list; skipping",
+            "[render-tools] skills.external_dirs is not a list",
             file=sys.stderr,
         )
         return []
 
-    added: list[str] = []
+    added = []
 
     for path in RENDER_SKILL_DIRS:
         if path not in existing:
@@ -190,29 +172,7 @@ def ensure_external_skill_dirs(config: dict) -> list[str]:
 
     return added
 
-def ensure_main_model(config: dict) -> bool:
-    """Configure OpenAI GPT-5.4 as the Hermes main model."""
-    desired = {
-    "provider": "openai",
-    "default": "gpt-5.4",
-    "base_url": "https://api.openai.com/v1",
-    "api_mode": "codex_responses",
-}
 
-    current = config.get("model")
-
-    if not isinstance(current, dict):
-        config["model"] = desired
-        return True
-
-    changed = False
-
-    for key, value in desired.items():
-        if current.get(key) != value:
-            current[key] = value
-            changed = True
-
-    return changed
 def save_config(path: Path, config: dict) -> None:
     text = yaml.safe_dump(
         config,
@@ -239,22 +199,36 @@ def main() -> int:
 
     config = load_config(path)
 
-    changed_render_mcp = ensure_render_mcp(config)
-    changed_selwa_mcp = ensure_selwa_law_mcp(config)
-    added_dirs = ensure_external_skill_dirs(config)
+    changed_render = ensure_render_mcp(config)
+    changed_selwa = ensure_selwa_law_mcp(config)
+    changed_provider = ensure_openai_direct_provider(config)
     changed_model = ensure_main_model(config)
-    if changed_render_mcp or changed_selwa_mcp or added_dirs or changed_model:
+    added_dirs = ensure_external_skill_dirs(config)
+
+    if (
+        changed_render
+        or changed_selwa
+        or changed_provider
+        or changed_model
+        or added_dirs
+    ):
         save_config(path, config)
 
         parts = []
 
-        if changed_render_mcp:
+        if changed_render:
             parts.append("mcp_servers.render")
 
-        if changed_selwa_mcp:
+        if changed_selwa:
             parts.append("mcp_servers.selwa_law")
+
+        if changed_provider:
+            parts.append("providers.openai-direct")
+
         if changed_model:
-    parts.append("model = openai/gpt-5.4")
+            parts.append("model = custom:openai-direct/gpt-5.4")
+
+        for dir_path in added_dirs:
             parts.append(f"skills.external_dirs += {dir_path}")
 
         print(
@@ -262,8 +236,8 @@ def main() -> int:
         )
     else:
         print(
-            f"[render-tools] {path} already contains Render MCP, "
-            "Selwa Law MCP, and skill dirs; nothing to do"
+            f"[render-tools] {path} already has required configuration; "
+            "nothing to do"
         )
 
     return 0
