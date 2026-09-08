@@ -255,7 +255,6 @@ def main() -> int:
             parts.append("mcp_servers.selwa_law")
         if changed_model:
     parts.append("model = openai/gpt-5.4")
-        for dir_path in added_dirs:
             parts.append(f"skills.external_dirs += {dir_path}")
 
         print(
