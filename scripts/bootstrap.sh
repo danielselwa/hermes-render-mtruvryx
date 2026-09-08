@@ -37,7 +37,70 @@ if [ -x "${PATCHER}" ]; then
 else
   echo "[render-tools] warning: ${PATCHER} not found or not executable; skipping" >&2
 fi
+echo "[render-tools] ===== SELWA MCP DIAGNOSTIC START ====="
 
+# Confirm Hermes has the MCP Python SDK and HTTP transport.
+gosu hermes /opt/hermes/.venv/bin/python - <<'PY'
+import importlib.util
+
+if importlib.util.find_spec("mcp") is None:
+    print("[render-tools] MCP SDK: NOT INSTALLED")
+else:
+    print("[render-tools] MCP SDK: installed")
+    try:
+        from mcp.client.streamable_http import streamablehttp_client
+        print("[render-tools] MCP HTTP transport: installed")
+    except Exception as exc:
+        print(
+            "[render-tools] MCP HTTP transport: ERROR "
+            f"{type(exc).__name__}: {exc}"
+        )
+PY
+
+# Confirm this Hermes container can reach Selwa Law MCP over Render's
+# private network.
+if SELWA_HEALTH="$(curl --connect-timeout 5 --max-time 10 -fsS \
+    http://selwa-law-mcp:8000/health 2>&1)"; then
+    echo "[render-tools] Selwa MCP health: CONNECTED ${SELWA_HEALTH}"
+else
+    CURL_STATUS=$?
+    echo "[render-tools] Selwa MCP health: NOT REACHABLE (curl exit ${CURL_STATUS}): ${SELWA_HEALTH}" >&2
+fi
+
+# Confirm the persisted Hermes config actually contains selwa_law.
+gosu hermes /opt/hermes/.venv/bin/python - "${DATA_DIR}/config.yaml" <<'PY'
+import sys
+import yaml
+
+path = sys.argv[1]
+
+try:
+    with open(path, "r", encoding="utf-8") as fh:
+        config = yaml.safe_load(fh) or {}
+
+    entry = (config.get("mcp_servers") or {}).get("selwa_law")
+
+    if not entry:
+        print("[render-tools] Selwa MCP config: MISSING")
+    else:
+        print("[render-tools] Selwa MCP config: present")
+        print("[render-tools] Selwa MCP URL:", entry.get("url"))
+        print(
+            "[render-tools] Selwa MCP protocol header:",
+            (entry.get("headers") or {}).get("mcp-protocol-version"),
+        )
+        print(
+            "[render-tools] Selwa MCP allowed tools:",
+            (entry.get("tools") or {}).get("include"),
+        )
+except Exception as exc:
+    print(
+        "[render-tools] Selwa MCP config check: ERROR "
+        f"{type(exc).__name__}: {exc}"
+    )
+PY
+
+echo "[render-tools] ===== SELWA MCP DIAGNOSTIC END ====="
 # Hand off to the upstream entrypoint. The upstream script handles
 # privilege drop, dashboard backgrounding, and the actual gateway exec.
 exec /opt/hermes/docker/entrypoint.sh "$@"
