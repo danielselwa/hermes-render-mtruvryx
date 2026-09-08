@@ -99,7 +99,9 @@ except Exception as exc:
         f"{type(exc).__name__}: {exc}"
     )
 PY
-
+echo "[render-tools] Hermes native MCP self-test:"
+gosu hermes /opt/hermes/.venv/bin/hermes mcp test selwa_law || true
+echo "[render-tools] Hermes native MCP self-test complete"
 echo "[render-tools] ===== SELWA MCP DIAGNOSTIC END ====="
 # Hand off to the upstream entrypoint. The upstream script handles
 # privilege drop, dashboard backgrounding, and the actual gateway exec.
