@@ -70,6 +70,9 @@ def _render_entry() -> dict:
 def _selwa_law_entry() -> dict:
     return {
         "url": SELWA_LAW_MCP_URL,
+        "headers": {
+            "mcp-protocol-version": "2025-06-18",
+        },
         "tools": {
             "include": [
                 "system_status",
@@ -104,7 +107,7 @@ def ensure_render_mcp(config: dict) -> bool:
 
 
 def ensure_selwa_law_mcp(config: dict) -> bool:
-    """Insert mcp_servers.selwa_law if missing."""
+    """Ensure Selwa Law MCP exists and uses the compatible protocol header."""
     mcp_servers = config.get("mcp_servers")
 
     if mcp_servers is None:
@@ -120,12 +123,39 @@ def ensure_selwa_law_mcp(config: dict) -> bool:
         )
         return False
 
-    if "selwa_law" in mcp_servers:
+    entry = mcp_servers.get("selwa_law")
+
+    if entry is None:
+        mcp_servers["selwa_law"] = _selwa_law_entry()
+        return True
+
+    if not isinstance(entry, dict):
+        print(
+            "[render-tools] mcp_servers.selwa_law is not a mapping; skipping",
+            file=sys.stderr,
+        )
         return False
 
-    mcp_servers["selwa_law"] = _selwa_law_entry()
-    return True
+    headers = entry.get("headers")
 
+    if headers is None:
+        entry["headers"] = {
+            "mcp-protocol-version": "2025-06-18",
+        }
+        return True
+
+    if not isinstance(headers, dict):
+        print(
+            "[render-tools] selwa_law headers is not a mapping; skipping",
+            file=sys.stderr,
+        )
+        return False
+
+    if headers.get("mcp-protocol-version") != "2025-06-18":
+        headers["mcp-protocol-version"] = "2025-06-18"
+        return True
+
+    return False
 
 def ensure_external_skill_dirs(config: dict) -> list[str]:
     """Append Render skill directories if missing."""
